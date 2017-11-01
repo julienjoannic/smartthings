@@ -18,7 +18,6 @@ metadata {
     	attribute "host", "string"
         attribute "id", "string"
         attribute "token", "string"
-        attribute "mac", "string"
 	}
 
 	simulator {
@@ -39,85 +38,30 @@ metadata {
 	}
 }
 
-def authenticate() {
-	if (state.busy) return
-    state.busy = true
-    
-	log.debug "Querying http://${device.currentValue("host")}/auth"
-    
-    sendHubCommand(new physicalgraph.device.HubAction([
-    	method: "GET",
-    	path: "/auth",
-    	headers: [
-        	HOST: device.currentValue("host")
-    	]], deviceNetworkId, [callback: "onAuthentication"]))
-}
-
-def onAuthentication(physicalgraph.device.HubResponse response) {
-	log.debug "Received /auth response: ${response.json}"
-    
-    if (response.json?.success) {
-    	sendEvent(name: "token", value: response.json.token)
-        sendEvent(name: "mac", value: response.mac.toString())
-        log.debug "Updating bridge network ID to ${response.mac}"
-        device.setDeviceNetworkId(response.mac.toString())
-    }
-    else {
-    	sendEvent(name: "token", value: null)
-    }
-    state.busy = false
-}
-
-def authenticated() {
-	return device.currentValue("token") != null
-}
-
-def list() {
-	if (state.busy) return
-	state.busy = true
-    
-	log.debug "Querying http://${device.currentValue("host")}/list"
-    
-    sendHubCommand(new physicalgraph.device.HubAction([
-    	method: "GET",
-    	path: "/list",
-        query: ["token": device.currentValue("token")],
-    	headers: [
-        	HOST: device.currentValue("host")
-    	]], deviceNetworkId, [callback: "onList"]))
-}
-
-def onList(physicalgraph.device.HubResponse response) {
-	log.debug "Received /list response: ${response.json}"
-    
-    state.locks = response.json
-    state.busy = false
-}
-
-def updateLocks(lockIds) {
-	log.debug "Updating locks of bridge ${device.deviceNetworkId} from ${lockIds}"
+def updateLocks(locks) {
+	log.debug "Updating locks of bridge ${device.currentValue("id")} from ${locks}"
 
 	// Add new locks
-	lockIds.each { lockId ->
-    	def parts = lockId.split(":")
-    	def bridgeId = parts[0]
-        def nukiId = parts[1] as Integer
-        if (bridgeId == device.deviceNetworkId) {
-        	def device = getChildDevices()?.find { it.deviceNetworkId == lockId }
-            if (!device) {
-            	log.debug "Finding lock ${nukiId} in ${state.locks}"
-            	def lock = state.locks.find { log.debug "'${it.nukiId}' == '${nukiId}' -> ${it.nukiId == nukiId}"; it.nukiId == nukiId }
-            	log.debug "Adding lock ${nukiId} (${lock?.name}) for bridge ${bridgeId}"
-            	device = addChildDevice("julienjoannic", "Nuki Lock", lockId, null, ["isComponent": false, "label": lock.name])
+	locks.each { lock ->
+        if (lock.bridgeId == device.currentValue("id")) {
+        	def lockDevice = getLockDevice(lock.lockId)
+            if (!lockDevice && !state.lockIds?.contains(lock.lockId)) {
+            	log.debug "Adding lock ${lock.nukiId} (${lock.name}) for bridge ${lock.bridgeId}"
+                if (!state.lockIds) state.lockIds = []
+                state.lockIds << lock.lockId
+                addChildDevice("julienjoannic", "Nuki Lock", lock.lockId, null, ["isComponent": false, "label": lock.name])
+       			lock.sendEvent(name: "lock", value: "unknown")
+                childLockState(lock.lockId)
             }
         }
     }
     
     // Delete extra locks
     getChildDevices()?.each { device ->
-    	log.debug "Checking if lock ${device.deviceNetworkId} is still selected (in ${lockIds})"
-    	if (!lockIds.contains(device.deviceNetworkId)) {
+    	log.debug "Checking if lock ${device.deviceNetworkId} is still selected (in ${locks})"
+    	if (!locks.find { it.lockId == device.deviceNetworkId }) {
         	log.debug "Deleting lock ${device.deviceNetworkId}"
+            state.lockIds.remove(lock.lockId)
         	deleteChildDevice(device.deviceNetworkId)
         }
     }
@@ -183,7 +127,12 @@ def onChildLockState(physicalgraph.device.HubResponse response) {
 }
 
 def getLockDevice(dni) {
-	def lock = getChildDevices()?.find { it.deviceNetworkId == dni }
+	log.debug "Current devices of bridge ${device.currentValue("id")}"
+	getChildDevices()?.each { lock ->
+    	log.debug "${lock} (${lock.deviceNetworkId})"
+    }
+
+	def lock = getChildDevices()?.find { return it.deviceNetworkId.toString() == dni.toString() }
     if (!lock) {
        	log.warn "Could not find child device for DNI ${dni}"
     }
@@ -191,21 +140,59 @@ def getLockDevice(dni) {
     return lock
 }
 
+def getCallbackUrl() {
+	return device.hub.getDataValue("localIP") + ":" + device.hub.getDataValue("localSrvPortTCP")
+}
+
+def registerCallback() {
+	log.debug "Querying http://${device.currentValue("host")}/callback/list"
+    
+    def action = new physicalgraph.device.HubAction([
+    	method: "GET",
+    	path: "/callback/list",
+        query: ["token": device.currentValue("token")],
+    	headers: [
+        	HOST: device.currentValue("host")
+    	]], dni, [callback: "onCallbackList"])
+        
+    sendHubCommand(action)
+}
+
+def onCallbackList(physicalgraph.device.HubResponse response) {
+	log.debug "Received /callback/list response: ${response.json}"
+    
+    if (!response.json?.callbacks?.find { it.url == getCallbackUrl() }) {
+        log.debug "Querying http://${device.currentValue("host")}/callback/add"
+
+        def action = new physicalgraph.device.HubAction([
+            method: "GET",
+            path: "/callback/add",
+            query: ["token": device.currentValue("token"),
+            		url: getCallbackUrl()],
+            headers: [
+                HOST: device.currentValue("host")
+            ]], dni, [callback: "onCallbackAdd"])
+
+        sendHubCommand(action)
+    }
+}
+
+def onCallbackAdd(physicalgraph.device.HubResponse response) {
+	log.debug "Received /callback/add response: ${response.json}"
+}
+
 // parse events into attributes
 def parse(String description) {
-	log.debug "Parsing '${description}'"
-
-}
-
-def installed() {
-	log.debug "Installed"
-    
-    log.debug "Updating bridge network ID to ${device.currentValue("mac")}"
-    device.setDeviceNetworkId("${device.currentValue("mac")}")
-}
-
-def uninstalled() {
-	log.debug "Uninstalled"
+    def message = parseLanMessage(description)
+    log.debug "Received message ${message.json}"
+    if (message.json) {
+        def dni = "${device.currentValue("id")}:${message.json.nukiId}"
+        def lock = getLockDevice(dni)
+        if (lock) {
+            log.debug "Updating state of lock ${lock} to ${message.json.stateName}"
+            lock.sendEvent(name: "lock", value: message.json.stateName)
+        }
+    }
 }
 
 def pushRequest(action, value) {   
