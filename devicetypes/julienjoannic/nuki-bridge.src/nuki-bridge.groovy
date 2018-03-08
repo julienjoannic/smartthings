@@ -68,14 +68,14 @@ def updateLocks(locks) {
 }
 
 def childLockAction(dni, lockAction) {
-    log.debug "Querying /lockAction for ${dni}"
+    log.debug "Querying /lockAction ${lockAction} for ${dni}"
     
     def action = new physicalgraph.device.HubAction([
     	method: "GET",
     	path: "/lockAction",
         query: ["token": device.currentValue("token"),
         		"nukiId": dni.split(":")[1],
-                "lockAction": lockAction],
+                "action": lockAction],
     	headers: [
         	HOST: device.currentValue("host")
     	]], dni, [callback: "onChildLockAction"]);
@@ -87,6 +87,7 @@ def childLockAction(dni, lockAction) {
 def onChildLockAction(physicalgraph.device.HubResponse response) {
     def values = popRequest(response)
 	log.debug "Received /lockAction response for ${values.dni}: ${response}"
+    log.debug response.properties
     
     if (response.json?.success) {
     	def lock = getChildDevices()?.find { it.deviceNetworkId == values.dni }
@@ -115,12 +116,12 @@ def childLockState(dni) {
 
 def onChildLockState(physicalgraph.device.HubResponse response) {
 	def dni = popRequest(response)
-	log.debug "Received /lockState response: ${response} for ${dni}"
+	log.debug "Received /lockState response: ${response.json} for ${dni}"
     
     if (response.json?.success) {
     	def lock = getLockDevice(dni)
         if (lock) {
-        	def value = [1: "locked", 2: "unlocking", 3: "unlocked", 4: "locking"][response.json.state]
+        	def value = [1: "locked", 2: "unlocking", 3: "unlocked", 4: "locking", 255: "unknown"][response.json.state]
        		lock.sendEvent(name: "lock", value: value);
        }
     }
@@ -141,7 +142,7 @@ def getLockDevice(dni) {
 }
 
 def getCallbackUrl() {
-	return device.hub.getDataValue("localIP") + ":" + device.hub.getDataValue("localSrvPortTCP")
+	return "http://${device.hub.getDataValue("localIP")}:${device.hub.getDataValue("localSrvPortTCP")}/nuki"
 }
 
 def registerCallback() {
@@ -159,16 +160,17 @@ def registerCallback() {
 }
 
 def onCallbackList(physicalgraph.device.HubResponse response) {
-	log.debug "Received /callback/list response: ${response.json}"
+	log.debug "Received /callback/list response: ${response.json} (${response})"
     
-    if (!response.json?.callbacks?.find { it.url == getCallbackUrl() }) {
+    def url = getCallbackUrl()
+    if (!response.json?.callbacks?.find { it.url == url }) {
         log.debug "Querying http://${device.currentValue("host")}/callback/add"
 
         def action = new physicalgraph.device.HubAction([
             method: "GET",
             path: "/callback/add",
             query: ["token": device.currentValue("token"),
-            		url: getCallbackUrl()],
+            		url: url],
             headers: [
                 HOST: device.currentValue("host")
             ]], dni, [callback: "onCallbackAdd"])

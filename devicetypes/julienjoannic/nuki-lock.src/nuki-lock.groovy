@@ -20,7 +20,6 @@ metadata {
         capability "Battery"
 	}
 
-
 	simulator {
 		// TODO: define status and reply messages here
 	}
