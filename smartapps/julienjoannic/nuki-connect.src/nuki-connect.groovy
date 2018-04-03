@@ -93,25 +93,42 @@ def mainPage() {
 }
 
 def discoverBridges() {
-    def params = [
+    /*def params = [
         uri:  'https://factory.nuki.io/discover/bridges',
         contentType: 'application/json'
     ]
     log.debug "Querying ${params.uri}"
 
-    asynchttp_v1.get('onBridgeDiscovered', params)
-    state.discovering = true
+    asynchttp_v1.get('onBridgeDiscovered', params)*/
+    
+    /*render contentType: 'text/html', data: "<html><body><p>miaou</p></body></html>"
+    
+    log.debug "Querying http://factory.nuki.io:443/discover/bridges"
+    sendHubCommand(new physicalgraph.device.HubAction([
+    	method: "GET",
+    	path: "/",
+    	headers: [
+        	HOST: "216.146.38.70:80"
+    	]], deviceNetworkId, [callback: "onBridgeDiscovered"]))
+    
+    state.discovering = true*/
+    
+    state.bridges = [["bridgeId":106201270,"ip":"192.168.2.3","port":8080,"dateUpdated":"2017-11-09T17:54:26Z"]]
+    
+    state.bridges.each { bridge ->
+    	bridge.bridgeId = bridge.bridgeId.toString()
+        def device = getChildDevices()?.find { it.currentValue("id") == bridge.bridgeId }
+        if (device) {
+        	bridge.token = device.currentValue("token")
+            bridge.mac = device.deviceNetworkId
+        }
+    }
 }
 
-def onBridgeDiscovered(response, data) {
-    log.debug "got response data: ${response.getData()}"
-    //state.bridges = response.json.bridges
-    state.bridges = [ [
- 		"bridgeId": 2117604523,
-        "ip": "192.168.2.170",
-        "port": 8080,
-        "dateUpdated": "2017-06-14T06:53:44Z"
- 	] ]
+def onBridgeDiscovered(response, blip) {
+    log.debug "got response data: ${response.json}"
+    state.bridges = response.json.bridges
+    state.bridges = [["bridgeId":106201270,"ip":"192.168.2.3","port":8080,"dateUpdated":"2017-11-09T17:54:26Z"]]
     
     state.bridges.each { bridge ->
     	bridge.bridgeId = bridge.bridgeId.toString()
